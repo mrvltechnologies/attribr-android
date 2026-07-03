@@ -11,12 +11,26 @@ android {
     namespace = "com.mrvltechnologies.attribr"
     compileSdk = 35
 
+    // Sprint 13B — AGP 8+ requires this to be explicitly enabled when
+    // buildConfigField() is used in defaultConfig.
+    buildFeatures {
+        buildConfig = true
+    }
+
     defaultConfig {
         minSdk = 21
         targetSdk = 35
         consumerProguardFiles("consumer-rules.pro")
         // Sprint 3 — bump to expose the structured play_referrer payload
         buildConfigField("String", "SDK_VERSION", "\"1.4.0\"")
+    }
+
+    // Sprint 13B — org.json.JSONObject in android.jar is a mock that throws
+    // "Method put not mocked" from plain JVM unit tests. Enabling
+    // includeAndroidResources gives us the real JSON impl so PayloadShapeTest
+    // can construct JSONObject instances in tests.
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
     }
 
     compileOptions {
@@ -38,6 +52,9 @@ android {
 dependencies {
     // Play Install Referrer — deterministic deferred attribution on Android
     implementation("com.android.installreferrer:installreferrer:2.2")
+
+    // Sprint 13B — plain JUnit 4 for InstallInstanceTest (Robolectric-free).
+    testImplementation("junit:junit:4.13.2")
 }
 
 // Sprint 3C — maven-publish enables consumption via JitPack, Maven Local,

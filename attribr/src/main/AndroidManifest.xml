@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Sprint 13B — minimal manifest so AGP can compile the module standalone. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" />
