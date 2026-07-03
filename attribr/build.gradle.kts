@@ -53,6 +53,9 @@ dependencies {
     // Play Install Referrer — deterministic deferred attribution on Android
     implementation("com.android.installreferrer:installreferrer:2.2")
 
+    // Sprint 13C — required by AttribrMonetisation for suspend/withContext.
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
     // Sprint 13B — plain JUnit 4 for InstallInstanceTest (Robolectric-free).
     testImplementation("junit:junit:4.13.2")
 }

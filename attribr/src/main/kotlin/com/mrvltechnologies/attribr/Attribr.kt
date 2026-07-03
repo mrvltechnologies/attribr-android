@@ -51,6 +51,21 @@ public object Attribr {
         Thread(runnable, "AttribrSDK-io").apply { isDaemon = true }
     }
 
+    /**
+     * Immutable snapshot of the values passed to [initialize]. Exposed so that
+     * companion modules (e.g. [AttribrMonetisation]) can read the API key
+     * without re-plumbing it. Null until [initialize] has been called.
+     */
+    public data class ConfigurationSnapshot(
+        val apiKey: String,
+        val config: AttribrConfiguration,
+    )
+
+    /** Snapshot of the current configuration, or `null` before initialisation. */
+    @JvmStatic
+    public val configuration: ConfigurationSnapshot?
+        get() = if (isInitialized) ConfigurationSnapshot(apiKey, config) else null
+
     // -------------------------------------------------------------------------
     // Public API — mirrors Swift SDK exactly
     // -------------------------------------------------------------------------
@@ -389,7 +404,7 @@ public object Attribr {
                                 put("referrer_click_timestamp_server_seconds",   details.referrerClickTimestampServerSeconds)
                                 put("install_begin_timestamp_server_seconds",    details.installBeginTimestampServerSeconds)
                                 put("install_version",                           details.installVersion ?: "")
-                                put("google_play_instant",                       details.googlePlayInstant)
+                                put("google_play_instant",                       details.googlePlayInstantParam)
                             }
                         }
                         com.android.installreferrer.api.InstallReferrerClient.InstallReferrerResponse.FEATURE_NOT_SUPPORTED -> {
