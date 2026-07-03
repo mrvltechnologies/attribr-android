@@ -11,7 +11,13 @@ pluginManagement {
     // declares these plugins, these versions will be overridden by the
     // parent — the constraint only kicks in when the SDK is built stand-alone.
     plugins {
-        id("com.android.library")           version "8.5.2"
+        // Sprint 14 — bumped from 8.5.2 to 8.7.3 to match modern MRVL app
+        // AGP versions (Hawk Android is on 8.7.3). Composite Gradle builds
+        // (`includeBuild`) require the root and included build to agree on
+        // AGP version, so this pin drives Sprint 14 dogfood consumption.
+        // Stand-alone builds still work; Kotlin stays at 1.9.24 (also
+        // supported by AGP 8.7.x).
+        id("com.android.library")           version "8.7.3"
         id("org.jetbrains.kotlin.android")  version "1.9.24"
     }
 }
