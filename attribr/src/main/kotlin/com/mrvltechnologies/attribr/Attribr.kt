@@ -107,7 +107,7 @@ public object Attribr {
             this.eventQueue      = EventQueue(this.appContext, config.maxQueueSize, logger)
             this.deviceState     = DeviceStateStore(this.appContext)
             this.networkClient   = NetworkClient(apiKey, config, logger)
-            this.deepLinkHandler = DeepLinkHandler(networkClient, deviceIdentifier, logger, appContext.packageName)
+            this.deepLinkHandler = DeepLinkHandler(networkClient, deviceIdentifier, logger, appContext.packageName, eventQueue)
             this.isInitialized   = true
 
             logger.info("Attribr initialized — key prefix: ${apiKey.take(18)}…")
@@ -691,6 +691,9 @@ public object Attribr {
             put("currency", currency)
             adUnitId?.let { put("ad_unit_id", it) }
             adFormat?.let { put("ad_format", it) }
+            // Idempotency key — generated at build time so the queued retry
+            // carries the same id as the failed attempt (see buildBasePayload).
+            put("sdk_event_id", UUID.randomUUID().toString())
         }
         val bodyStr = body.toString()
 
@@ -722,13 +725,31 @@ public object Attribr {
             put("device_hash", deviceHash)
             put("platform", "android")
             put("push_token", fcmToken)
+            // Idempotency key — generated at build time so the queued retry
+            // carries the same id as the failed attempt (see buildBasePayload).
+            put("sdk_event_id", UUID.randomUUID().toString())
         }
+        val bodyStr = body.toString()
 
-        when (val result = networkClient.post("attribr-push-token", body.toString())) {
+        when (val result = networkClient.post("attribr-push-token", bodyStr)) {
             is NetworkResult.Success -> logger.debug("registerPushToken: success")
             is NetworkResult.Failure -> {
-                // Push token registration is best-effort — no queuing
-                logger.error("registerPushToken failed: ${result.statusCode} ${result.error?.message}")
+                // Durable delivery: FCM won't resend the token until rotation
+                // (potentially months away), so dropping it on one network
+                // failure breaks uninstall detection for that device. Queue
+                // it like every other durable path.
+                logger.error("registerPushToken failed: ${result.statusCode} ${result.error?.message} — queued for retry")
+                eventQueue.enqueue(
+                    QueuedEvent(
+                        id         = UUID.randomUUID().toString(),
+                        kind       = EventKind.PUSH_TOKEN,
+                        endpoint   = "attribr-push-token",
+                        method     = "POST",
+                        payload    = bodyStr,
+                        enqueuedAt = System.currentTimeMillis(),
+                        attempts   = 1,
+                    )
+                )
             }
         }
     }
@@ -752,6 +773,9 @@ public object Attribr {
             put("store", "android")
             revenue?.let { put("revenue_usd", it) }
             originalTransactionId?.let { put("original_transaction_id", it) }
+            // Idempotency key — generated at build time so the queued retry
+            // carries the same id as the failed attempt (see buildBasePayload).
+            put("sdk_event_id", UUID.randomUUID().toString())
         }
         val bodyStr = body.toString()
 
@@ -794,6 +818,9 @@ public object Attribr {
             put("store",          store)
             put("event_type",     eventType)
             productId?.let { put("product_id", it) }
+            // Idempotency key — generated at build time so the queued retry
+            // carries the same id as the failed attempt (see buildBasePayload).
+            put("sdk_event_id",   UUID.randomUUID().toString())
         }
         val bodyStr = body.toString()
 
@@ -876,6 +903,12 @@ public object Attribr {
             // installation of the app on the same device (SharedPreferences
             // is wiped on uninstall, so the hash changes across reinstalls).
             put("sdk_install_instance_id_hash", InstallInstance.hashHex(appContext))
+            // Idempotency key — one fresh UUID per LOGICAL event, generated
+            // here at payload-build time (before the first send attempt), so
+            // a queued retry carries the SAME id as the failed attempt and
+            // the backend can deduplicate timeout-then-retry double sends.
+            // Never regenerate this at flush time.
+            put("sdk_event_id", UUID.randomUUID().toString())
         }
     }
 

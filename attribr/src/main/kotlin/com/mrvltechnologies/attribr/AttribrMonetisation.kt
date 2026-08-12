@@ -18,7 +18,15 @@ data class AttribrEntitlements(
     val installLimit: Int,
     val appLimit: Int,
     /** ISO 8601 string; null if no active subscription. */
-    val validUntil: String?
+    val validUntil: String?,
+    /**
+     * True when this object is an offline fallback ([seedDefaults]) returned
+     * because the server could not be reached — NOT a server-confirmed
+     * entitlement state. Hosts that care (e.g. to avoid downgrading a paid
+     * user during a network blip) should check this before gating features.
+     * Defaults to false so existing callers compile unchanged.
+     */
+    val isStale: Boolean = false
 ) {
     /** True if a specific feature is available in the current tier. */
     fun hasFeature(feature: String): Boolean = features.contains(feature)
@@ -78,8 +86,25 @@ sealed class AttribrMonetisationException(message: String) : Exception(message) 
  */
 object AttribrMonetisation {
 
-    private const val BASE_URL = "https://pblzmoxcwpqywuyubdim.supabase.co/functions/v1"
+    /** Fallback only — used when [Attribr.initialize] has not been called. */
+    private const val DEFAULT_BASE_URL = "https://pblzmoxcwpqywuyubdim.supabase.co/functions/v1"
     private const val UPGRADE_URL = "https://attribr.dev/pricing"
+
+    /** Default when no configuration is available (matches the previous hardcoded timeouts' order of magnitude). */
+    private const val DEFAULT_TIMEOUT_MS = 10_000L
+
+    /**
+     * Functions host, derived from the SDK configuration so a custom
+     * [AttribrConfiguration.baseURL] (staging, self-hosted) is honoured
+     * instead of always hitting production. Falls back to the production
+     * constant before [Attribr.initialize].
+     */
+    private val baseUrl: String
+        get() = Attribr.configuration?.config?.baseURL?.trimEnd('/') ?: DEFAULT_BASE_URL
+
+    /** Honours [AttribrConfiguration.requestTimeout] like NetworkClient does. */
+    private val timeoutMs: Int
+        get() = (Attribr.configuration?.config?.requestTimeout ?: DEFAULT_TIMEOUT_MS).toInt()
 
     // ── Validate receipt ───────────────────────────────────────────────────
 
@@ -105,7 +130,7 @@ object AttribrMonetisation {
             put("transaction_id", transactionId)
         }.toString()
 
-        val (statusCode, responseBody) = post("$BASE_URL/validate-receipt", apiKey, body)
+        val (statusCode, responseBody) = post("$baseUrl/validate-receipt", apiKey, body)
 
         when {
             statusCode == 403 -> throw AttribrMonetisationException.TierNotSupported(UPGRADE_URL)
@@ -124,16 +149,19 @@ object AttribrMonetisation {
      * Fetch current entitlements from the Attribr cache.
      * Fast — no Apple/Google API call. Call at app launch to gate features.
      *
-     * Falls back to [AttribrEntitlements.seedDefaults] on any network error.
+     * Falls back to [AttribrEntitlements.seedDefaults] on any network error
+     * (fail-open so offline apps keep working) — the fallback is flagged
+     * with [AttribrEntitlements.isStale] = true so hosts can distinguish
+     * "server says seed tier" from "we never reached the server".
      */
     suspend fun getEntitlements(): AttribrEntitlements = withContext(Dispatchers.IO) {
         try {
             val apiKey = requireApiKey()
-            val (statusCode, responseBody) = get("$BASE_URL/get-entitlements", apiKey)
+            val (statusCode, responseBody) = get("$baseUrl/get-entitlements", apiKey)
             if (statusCode == 200) parseEntitlements(JSONObject(responseBody))
-            else AttribrEntitlements.seedDefaults
+            else AttribrEntitlements.seedDefaults.copy(isStale = true)
         } catch (_: Exception) {
-            AttribrEntitlements.seedDefaults
+            AttribrEntitlements.seedDefaults.copy(isStale = true)
         }
     }
 
@@ -185,40 +213,44 @@ object AttribrMonetisation {
     }
 
     private fun post(url: String, apiKey: String, body: String): Pair<Int, String> {
-        val conn = URL(url).openConnection() as HttpURLConnection
+        var conn: HttpURLConnection? = null
         return try {
-            conn.requestMethod = "POST"
-            conn.setRequestProperty("Content-Type", "application/json")
-            conn.setRequestProperty("X-Attribr-Key", apiKey)
-            conn.connectTimeout = 10_000
-            conn.readTimeout = 10_000
-            conn.doOutput = true
-            conn.outputStream.use { it.write(body.toByteArray()) }
-            val code = conn.responseCode
-            val rb = try { conn.inputStream.bufferedReader().readText() }
-                     catch (_: Exception) { conn.errorStream?.bufferedReader()?.readText() ?: "" }
+            val c = URL(url).openConnection() as HttpURLConnection
+            conn = c
+            c.requestMethod = "POST"
+            c.setRequestProperty("Content-Type", "application/json")
+            c.setRequestProperty("X-Attribr-Key", apiKey)
+            c.connectTimeout = timeoutMs
+            c.readTimeout = timeoutMs
+            c.doOutput = true
+            c.outputStream.use { it.write(body.toByteArray()) }
+            val code = c.responseCode
+            val rb = try { c.inputStream.bufferedReader().readText() }
+                     catch (_: Exception) { c.errorStream?.bufferedReader()?.readText() ?: "" }
             Pair(code, rb)
         } catch (e: Exception) {
             throw AttribrMonetisationException.NetworkError(e)
         } finally {
-            conn.disconnect()
+            try { conn?.disconnect() } catch (_: Throwable) {}
         }
     }
 
     private fun get(url: String, apiKey: String): Pair<Int, String> {
-        val conn = URL(url).openConnection() as HttpURLConnection
+        var conn: HttpURLConnection? = null
         return try {
-            conn.requestMethod = "GET"
-            conn.setRequestProperty("X-Attribr-Key", apiKey)
-            conn.connectTimeout = 5_000
-            conn.readTimeout = 5_000
-            val code = conn.responseCode
-            val rb = try { conn.inputStream.bufferedReader().readText() } catch (_: Exception) { "" }
+            val c = URL(url).openConnection() as HttpURLConnection
+            conn = c
+            c.requestMethod = "GET"
+            c.setRequestProperty("X-Attribr-Key", apiKey)
+            c.connectTimeout = timeoutMs
+            c.readTimeout = timeoutMs
+            val code = c.responseCode
+            val rb = try { c.inputStream.bufferedReader().readText() } catch (_: Exception) { "" }
             Pair(code, rb)
         } catch (e: Exception) {
             throw AttribrMonetisationException.NetworkError(e)
         } finally {
-            conn.disconnect()
+            try { conn?.disconnect() } catch (_: Throwable) {}
         }
     }
 }

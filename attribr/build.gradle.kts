@@ -58,6 +58,11 @@ dependencies {
 
     // Sprint 13B — plain JUnit 4 for InstallInstanceTest (Robolectric-free).
     testImplementation("junit:junit:4.13.2")
+
+    // Auto Backup fix — real org.json for EventQueueTest. The android.jar
+    // used by plain-JVM unit tests only ships a mock that throws
+    // "Method put not mocked"; this jar shadows it on the test classpath.
+    testImplementation("org.json:json:20231013")
 }
 
 // Sprint 3C — maven-publish enables consumption via JitPack, Maven Local,

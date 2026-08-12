@@ -13,6 +13,8 @@ internal enum class EventKind(val value: String) {
     AD_REVENUE("ad_revenue"),
     SUBSCRIPTION_EVENT("subscription_event"),
     REFERRER("referrer"),
+    PUSH_TOKEN("push_token"),
+    DEEP_LINK("deep_link"),
     ;
 
     companion object {

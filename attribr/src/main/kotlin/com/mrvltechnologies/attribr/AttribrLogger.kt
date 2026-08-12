@@ -9,17 +9,17 @@ import android.util.Log
  * keeps release-mode consumer apps free of internal SDK chatter while still
  * surfacing errors and one-time info lines.
  */
-internal class AttribrLogger(private val debugLogging: Boolean) {
+internal open class AttribrLogger(private val debugLogging: Boolean) {
 
-    fun info(message: String) {
+    open fun info(message: String) {
         Log.i(TAG, message)
     }
 
-    fun debug(message: String) {
+    open fun debug(message: String) {
         if (debugLogging) Log.d(TAG, message)
     }
 
-    fun error(message: String, throwable: Throwable? = null) {
+    open fun error(message: String, throwable: Throwable? = null) {
         if (throwable != null) Log.e(TAG, message, throwable) else Log.e(TAG, message)
     }
 

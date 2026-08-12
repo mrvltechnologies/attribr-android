@@ -43,6 +43,9 @@ class PayloadShapeTest {
             "app_version"                   to "1.0.0",
             "platform"                      to "android",
             "sdk_install_instance_id_hash"  to InstallInstance.hashHexWithStore(store),
+            // Idempotency key — fresh per logical event, fixed at build time
+            // (never regenerated at flush), mirroring Attribr.buildBasePayload.
+            "sdk_event_id"                  to java.util.UUID.randomUUID().toString(),
         )
     }
 
@@ -79,12 +82,33 @@ class PayloadShapeTest {
     }
 
     @Test fun payload_does_not_contain_raw_install_instance_id() {
-        val raw = toJsonString(buildBasePayload(freshStore()))
-        // Raw UUID canonical shape: 8-4-4-4-12 hex with hyphens
+        val store = freshStore()
+        val raw = toJsonString(buildBasePayload(store))
+        // The payload legitimately carries ONE UUID — the sdk_event_id
+        // idempotency key. The raw install-instance UUID itself must never
+        // appear on the wire, only its SHA-256 hash.
+        val rawInstanceId = store.getString(InstallInstance.STORAGE_KEY)!!
         assertFalse(
-            "raw UUID must never appear in the wire payload",
-            Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}").containsMatchIn(raw),
+            "raw install-instance UUID must never appear in the wire payload",
+            raw.contains(rawInstanceId),
         )
+    }
+
+    @Test fun payload_sdk_event_id_is_valid_uuid_and_unique_per_event() {
+        val store = freshStore()
+        val a = buildBasePayload(store)["sdk_event_id"] as String
+        val b = buildBasePayload(store)["sdk_event_id"] as String
+        assertTrue("sdk_event_id must be a canonical UUID", InstallInstance.isValidUuid(a))
+        org.junit.Assert.assertNotEquals("each logical event gets a fresh id", a, b)
+    }
+
+    @Test fun payload_sdk_event_id_stable_once_built() {
+        // The idempotency guarantee: the id is fixed when the payload is
+        // BUILT, so the serialised body queued after a failed send carries
+        // the same id as the original attempt.
+        val body = buildBasePayload(freshStore())
+        val serialisedTwice = toJsonString(body) == toJsonString(body)
+        assertTrue("serialising the same built payload must not change sdk_event_id", serialisedTwice)
     }
 
     @Test fun payload_forbidden_field_names_absent() {
@@ -111,7 +135,7 @@ class PayloadShapeTest {
         val body = buildBasePayload(freshStore())
         val allowed = setOf(
             "app_id", "device_hash", "os_version", "app_version",
-            "platform", "sdk_install_instance_id_hash",
+            "platform", "sdk_install_instance_id_hash", "sdk_event_id",
         )
         assertEquals(allowed, body.keys)
     }

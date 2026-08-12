@@ -24,6 +24,7 @@ internal class DeepLinkHandler(
     private val deviceIdentifier: DeviceIdentifier,
     private val logger: AttribrLogger,
     private val appId: String,
+    private val eventQueue: EventQueue,
 ) {
     /**
      * Process an incoming URI. Extracts link_code from attribr.dev/l/{code} URIs
@@ -47,9 +48,14 @@ internal class DeepLinkHandler(
             put("app_id", appId)
             put("device_hash", deviceHash)
             put("link_code", linkCode)
+            // Idempotency key — generated once at build time, so a queued
+            // retry carries the same id as the failed first attempt and the
+            // backend can deduplicate. See Attribr.buildBasePayload.
+            put("sdk_event_id", java.util.UUID.randomUUID().toString())
         }
+        val bodyStr = body.toString()
 
-        return when (val result = networkClient.post("attribr-deeplink-resolve", body.toString())) {
+        return when (val result = networkClient.post("attribr-deeplink-resolve", bodyStr)) {
             is NetworkResult.Success -> {
                 try {
                     val json = JSONObject(result.body)
@@ -65,7 +71,21 @@ internal class DeepLinkHandler(
                 }
             }
             is NetworkResult.Failure -> {
-                logger.error("Deep link resolution failed")
+                // Durable delivery: the click payload is queued and retried on
+                // the next flush, so returning Attributed here is honest —
+                // the attribution WILL reach the server.
+                logger.error("Deep link resolution failed — click queued for retry")
+                eventQueue.enqueue(
+                    QueuedEvent(
+                        id         = java.util.UUID.randomUUID().toString(),
+                        kind       = EventKind.DEEP_LINK,
+                        endpoint   = "attribr-deeplink-resolve",
+                        method     = "POST",
+                        payload    = bodyStr,
+                        enqueuedAt = System.currentTimeMillis(),
+                        attempts   = 1,
+                    )
+                )
                 DeepLinkResult.Attributed(linkCode)
             }
         }
