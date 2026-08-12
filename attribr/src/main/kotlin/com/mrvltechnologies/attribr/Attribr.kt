@@ -39,8 +39,16 @@ public object Attribr {
     private lateinit var networkClient: NetworkClient
     private lateinit var appContext: Context
     private lateinit var deepLinkHandler: DeepLinkHandler
+    private lateinit var deviceState: DeviceStateStore
 
-    // Install referrer check is best-effort, fires once on first install
+    // Install referrer fetch fires once per install instance. The flag lives
+    // in DeviceStateStore (noBackupFilesDir), NOT SharedPreferences — Auto
+    // Backup used to restore a "true" flag onto genuinely fresh installs,
+    // which silently skipped the referrer query entirely (the main cause of
+    // the ~90% missing-referrer rate observed in production). Deliberately
+    // NOT migrated from the old prefs key: an existing install re-fetching
+    // once is harmless (the backend upserts) and actually recovers referrer
+    // data for installs that lost it to the old delivery bug.
     private val referrerCheckedKey = "attribr_referrer_checked"
 
     /**
@@ -97,6 +105,7 @@ public object Attribr {
             this.consentManager  = ConsentManager(this.appContext)
             this.deviceIdentifier = DeviceIdentifier(this.appContext)
             this.eventQueue      = EventQueue(this.appContext, config.maxQueueSize, logger)
+            this.deviceState     = DeviceStateStore(this.appContext)
             this.networkClient   = NetworkClient(apiKey, config, logger)
             this.deepLinkHandler = DeepLinkHandler(networkClient, deviceIdentifier, logger, appContext.packageName)
             this.isInitialized   = true
@@ -378,11 +387,13 @@ public object Attribr {
      * Data Confidence Score observe Play Store availability as a health signal
      * instead of silently swallowing service outages.
      *
-     * Only fires once per install (gated by SharedPreferences flag).
+     * Only the FETCH is one-shot (gated by a DeviceStateStore flag, immune to
+     * Auto Backup restore — see the flag's declaration comment). Delivery is
+     * durable: the payload goes through the EventQueue on any failure, so a
+     * network blip on first launch no longer loses the referrer forever.
      */
     private fun checkInstallReferrer() {
-        val prefs = appContext.getSharedPreferences("attribr", Context.MODE_PRIVATE)
-        if (prefs.getBoolean(referrerCheckedKey, false)) return
+        if (deviceState.getBoolean(referrerCheckedKey)) return
 
         val client = com.android.installreferrer.api.InstallReferrerClient
             .newBuilder(appContext).build()
@@ -434,7 +445,7 @@ public object Attribr {
                     }
                 }
 
-                prefs.edit().putBoolean(referrerCheckedKey, true).apply()
+                deviceState.putBoolean(referrerCheckedKey, true)
                 runCatching { client.endConnection() }
                 logger.debug("Install referrer status: ${payload.optString("status")}")
                 executor.execute { sendInstallReferrer(payload) }
@@ -454,6 +465,20 @@ public object Attribr {
      * write a raw event describing what the Play Store told us. On success,
      * the backend parses the referrer for a deterministic attribution decision.
      * On failure, the backend records the status for the Data Confidence Score.
+     *
+     * Delivery is durable (Play Referrer gap fix): this used to be a single
+     * fire-and-forget POST after the one-shot fetch flag was already burned —
+     * one network blip on first launch (exactly when the network is least
+     * reliable) lost the referrer forever, silently. A failed send now goes
+     * into the EventQueue, which retries on every trackLaunch() and on
+     * setConsent(GRANTED).
+     *
+     * Consent (Play Referrer gap fix): this path used to bypass the consent
+     * gate that every other send path checks. The Play API is still queried
+     * immediately (purely on-device — the referrer string expires with the
+     * install, so fetch must not wait), but nothing leaves the device until
+     * consent is granted: the payload is queued and flushed by the first
+     * consented flush.
      */
     private fun sendInstallReferrer(playReferrer: JSONObject) {
         val body = buildBasePayload().apply {
@@ -468,10 +493,33 @@ public object Attribr {
             }
         }
 
+        if (!consentManager.isGranted) {
+            logger.debug("Play referrer payload queued — consent not granted yet")
+            enqueueReferrerPayload(body)
+            return
+        }
+
         when (val result = networkClient.post("attribr-track", body.toString())) {
             is NetworkResult.Success -> logger.debug("Play referrer payload sent successfully")
-            is NetworkResult.Failure -> logger.error("Play referrer send failed: ${result.statusCode}")
+            is NetworkResult.Failure -> {
+                logger.error("Play referrer send failed (${result.statusCode}) — queued for retry")
+                enqueueReferrerPayload(body)
+            }
         }
+    }
+
+    private fun enqueueReferrerPayload(body: JSONObject) {
+        eventQueue.enqueue(
+            QueuedEvent(
+                id         = java.util.UUID.randomUUID().toString(),
+                kind       = EventKind.REFERRER,
+                endpoint   = "attribr-track",
+                method     = "POST",
+                payload    = body.toString(),
+                enqueuedAt = System.currentTimeMillis(),
+                attempts   = 0,
+            )
+        )
     }
 
     // -------------------------------------------------------------------------
@@ -611,6 +659,10 @@ public object Attribr {
                 // subsequent trackLaunch() re-generates a fresh hash and
                 // classifies as reinstall_candidate on the server side.
                 InstallInstance.reset(appContext)
+                // Play Referrer gap fix — wipe the whole no-backup device
+                // state (referrer-checked flag included) so the deletion is
+                // complete on-device, matching InstallInstance's contract.
+                deviceState.clear()
                 logger.info("deleteAllData: confirmed by server")
                 true
             }
