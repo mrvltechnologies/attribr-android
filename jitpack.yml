@@ -5,7 +5,7 @@ jdk:
 # Consumers add:
 #   maven { url = uri("https://jitpack.io") }
 # to their repositories, then:
-#   implementation("com.github.mrvltechnologies:attribr-android:1.3.0")
+#   implementation("com.github.mrvltechnologies:attribr-android:v1.4.0")  // the "v" IS part of the resolvable version — it is the literal git tag
 # (or whichever tag / branch / commit hash they want to pin to).
 # NOTE: the coordinate's group/artifact are derived from the GitHub org/repo names
 # (case-sensitive on JitPack), NOT from the Maven groupId "com.mrvltechnologies" used

@@ -42,7 +42,7 @@ local filesystem path, required.
 repositories { maven { url = uri("https://jitpack.io") } }
 
 // app/build.gradle.kts
-implementation("com.github.mrvltechnologies:attribr-android:1.4.0")
+implementation("com.github.mrvltechnologies:attribr-android:v1.4.0") // NOTE: JitPack resolves by the literal git tag name, including the "v"
 ```
 
 The JitPack coordinate's group/artifact come from this repo's GitHub org/name
