@@ -1,5 +1,36 @@
 # Attribr Kotlin SDK — Changelog
 
+## Build tooling — 2026-09-22 (Volta Android Phase 3.1A shared-platform repair)
+
+- **Reverted the Sprint 14 AGP/Kotlin pin bump.** `settings.gradle.kts`'s `pluginManagement.plugins`
+  block goes back to **AGP 8.12.0 / Kotlin 2.0.21** (from Sprint 14's 8.7.3/1.9.24). Gradle wrapper
+  bumped 8.9 → 8.13 to satisfy AGP 8.12.0's minimum. **No public API, attribution semantics, consent
+  behaviour, network contracts, install-identity, or event-schema changes** — dependency/build-tooling
+  only, verified by this SDK's own full `clean test lint` (42 unit tests, 0 failures; lint 5
+  warnings, 0 errors).
+- **Why:** Sprint 14's own justification — "bumped... to match modern MRVL app AGP versions (Hawk
+  Android is on 8.7.3)" — was checked directly against Hawk by MRVL's actual committed
+  `android/gradle/libs.versions.toml` and is factually incorrect: Hawk is on AGP 8.12.0, not 8.7.3.
+  Because this SDK is consumed by multiple product apps as a **mutable sibling checkout** via Gradle
+  `includeBuild` (Volta directly; Hawk via a `packages/attribr` symlink to this same checkout), the
+  Sprint 14 change silently broke composite-build resolution for every consumer pinned to 8.12.0 —
+  discovered when it broke Volta Android's build mid-session, with an opaque
+  `AgpVersionCompatibilityRule` failure that gave no indication of which sibling repo had changed.
+  Full investigation, evidence, and the cross-repo consumer table:
+  `volta_ev_platform/apps/volta-android/MRVL_ANDROID_TOOLCHAIN_COMPATIBILITY.md` (in the Volta
+  monorepo, not duplicated here).
+- **Known open risk, not resolved by this change:** FlashSeat's native Android host module declares
+  AGP 8.7.3 / Kotlin 2.1.0 — different again from this reverted pin. Not independently build-verified
+  (no Gradle wrapper in that repo, no system-wide `gradle` binary available in the environment this
+  repair was made from). **If FlashSeat consumes this SDK via the same mutable-checkout
+  `includeBuild` pattern, that team should verify their build against this reverted pin.**
+- **Longer-term recommendation, not actioned here:** this SDK already has a working `maven-publish`
+  block (group `com.mrvltechnologies`, artifact `attribr`) that has never actually been published
+  anywhere (`~/.m2` has zero `com.mrvltechnologies` artifacts on the machine this was checked from).
+  Moving product consumers to a real published, versioned artifact — rather than a mutable sibling
+  checkout every app's build depends on simultaneously — would prevent this entire class of incident
+  regardless of which app's session happens to touch this repo next.
+
 ## 1.4.0 — 2026-07-03 (Sprint 13)
 
 - **App-local install-instance ID.** The SDK now generates a random UUID on first launch, persists it in the app's own `SharedPreferences("attribr", MODE_PRIVATE)`, and sends its SHA-256 hex digest to Attribr on every `trackLaunch()` in the new field `sdk_install_instance_id_hash`.
