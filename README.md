@@ -2,7 +2,7 @@
 
 Install attribution + 30-day retention tracking, with first-class Google Play Install Referrer support.
 
-**Version:** `1.3.0` — Sprint 3 Play Referrer support live in production.
+**Version:** `1.4.0` — reinstall-candidate detection via app-local install-instance hashing.
 
 ## Consumption paths
 
@@ -16,7 +16,7 @@ includeBuild("/absolute/path/to/Attribr-by-MRVL/sdk/kotlin")
 ```
 Then in `app/build.gradle.kts`:
 ```kotlin
-implementation("com.mrvltechnologies:attribr:1.3.0")
+implementation("com.mrvltechnologies:attribr:1.4.0")
 ```
 This is what every MRVL dogfood app uses. Fastest iteration, no artifact publishing needed.
 
@@ -28,32 +28,36 @@ From `sdk/kotlin/`:
 ```
 In the consuming app's `settings.gradle.kts` add `mavenLocal()` to `dependencyResolutionManagement { repositories { … } }`, then:
 ```kotlin
-implementation("com.mrvltechnologies:attribr:1.3.0")
+implementation("com.mrvltechnologies:attribr:1.4.0")
 ```
 
-### 3. JitPack — recommended for external consumers
+### 3. JitPack — the path for external (non-MRVL) consumers
 
-Tag a release in git:
-```bash
-git tag v1.3.0
-git push origin v1.3.0
-```
-JitPack detects the tag and builds automatically. In the consuming app:
+This repo (`github.com/mrvltechnologies/attribr-android`) is public and split out from the MRVL
+monorepo specifically so it can be published standalone via JitPack — no MRVL repo access, no
+local filesystem path, required.
+
 ```kotlin
 // settings.gradle.kts
 repositories { maven { url = uri("https://jitpack.io") } }
 
 // app/build.gradle.kts
-implementation("com.github.MarvelTechnologies:Attribr-by-MRVL:1.3.0")
+implementation("com.github.mrvltechnologies:attribr-android:1.4.0")
 ```
 
-## Release checklist (v1.3.0 → v1.3.1+)
+The JitPack coordinate's group/artifact come from this repo's GitHub org/name
+(`mrvltechnologies` / `attribr-android`, both lower-case — JitPack coordinates are
+case-sensitive) — NOT the Maven groupId used inside `build.gradle.kts`
+(`com.mrvltechnologies`) and NOT the monorepo's name. Verify a build exists for the tag you
+depend on at `https://jitpack.io/#mrvltechnologies/attribr-android` before shipping.
+
+## Release checklist (bumping the version)
 
 1. Bump `version` in `attribr/build.gradle.kts` (both the module `version = "…"` and inside the `afterEvaluate { publishing { … } }` block).
 2. Add an entry to `CHANGELOG.md` describing the change.
 3. Bump `SDK_VERSION` in `defaultConfig.buildConfigField` if you rely on it at runtime.
-4. Commit and tag: `git tag v1.3.1 && git push origin v1.3.1`.
-5. Verify JitPack build at `https://jitpack.io/#MarvelTechnologies/Attribr-by-MRVL`.
+4. Commit and tag: `git tag vX.Y.Z && git push origin vX.Y.Z` (matching the version bumped in step 1).
+5. Verify JitPack build at `https://jitpack.io/#mrvltechnologies/attribr-android`.
 6. Update the release-log rows in each MRVL Android app's `marketing.md`.
 
 ## Integration snippet

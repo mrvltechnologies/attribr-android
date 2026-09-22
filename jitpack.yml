@@ -1,11 +1,16 @@
 jdk:
   - openjdk17
 
-# Sprint 3C — JitPack build config. Consumers add:
+# JitPack build config for the PUBLIC github.com/mrvltechnologies/attribr-android repo.
+# Consumers add:
 #   maven { url = uri("https://jitpack.io") }
 # to their repositories, then:
-#   implementation("com.github.MarvelTechnologies:Attribr-by-MRVL:1.3.0")
+#   implementation("com.github.mrvltechnologies:attribr-android:1.3.0")
 # (or whichever tag / branch / commit hash they want to pin to).
+# NOTE: the coordinate's group/artifact are derived from the GitHub org/repo names
+# (case-sensitive on JitPack), NOT from the Maven groupId "com.mrvltechnologies" used
+# inside build.gradle.kts, and NOT the monorepo name (Attribr-by-MRVL) — this repo was
+# split out from the monorepo specifically so it could be published standalone.
 before_install:
   - echo "Using JDK 17"
 
