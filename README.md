@@ -63,8 +63,8 @@ depend on at `https://jitpack.io/#mrvltechnologies/attribr-android` before shipp
 ## Integration snippet
 
 ```kotlin
-// Application.onCreate()
-Attribr.initialize(this, apiKey = "attr_live_<yourprefix>...")
+// Application.onCreate() — the key comes from BuildConfig (see "API keys" below), never a source literal
+Attribr.initialize(this, apiKey = BuildConfig.ATTRIBR_API_KEY)
 Attribr.setConsent(ConsentState.GRANTED)
 
 // From ProcessLifecycleOwner or Activity.onResume()
@@ -72,3 +72,18 @@ Attribr.trackLaunch()
 ```
 
 Play Install Referrer is queried automatically on first launch. See `ATTRIBUTION_METHODOLOGY.md` for what fields are collected and what is NOT stored (raw IP, raw UA, GAID/Android ID — none of these ever leave the device).
+
+## API keys — which credential may ship in an app
+
+| Key scope | May be compiled into a mobile app? | Notes |
+|---|---|---|
+| `sdk_ingest` ("Client key") | **Yes — the only class allowed** | Write-only ingest (launch / event / revenue / attribution). Cannot read installs, revenue, cohorts, retention or sources. Treat as extractable-by-design; the security boundary is its scope. |
+| `full` | **NO — SERVER_ONLY** | Read + write on the whole Attribr API. Anyone who extracts it from an APK can read the customer's dashboard data. Never in an app, never in `BuildConfig`, never in `local.properties` of a mobile module. |
+| `api_read`, `evidence_ingest` | **NO — server only** | Read API / server-to-server evidence plane. |
+
+Generate the Client key in Attribr → Settings → API Keys. Even an `sdk_ingest` key is **never committed**:
+inject it at build time (`local.properties`/`secrets.properties` → `buildConfigField`, or the
+`ATTRIBR_API_KEY` environment variable) and fail Release builds when it is empty or a placeholder.
+Pattern and verification steps: `ATTRIBR_SDK_KEY_INJECTION_STANDARD.md` in the Attribr monorepo.
+Machine-readable policy for build gates: `sdk/KEY_POLICY.md` in the monorepo (`attribr-by-mrvl`).
+
