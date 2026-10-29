@@ -68,6 +68,15 @@ class EventQueueTest {
         assertEquals(EventKind.TRACK, reloaded[0].kind)
     }
 
+    @Test fun revoke_clearDropsAllStoredRetryPayloadsAcrossRestart() {
+        val file = tempStateFile("attribr_eq_revoke")
+        val q = queue(file)
+        q.enqueue(event("before-revocation"))
+        q.clear()
+        assertTrue(q.peek().isEmpty())
+        assertTrue(queue(file).peek().isEmpty())
+    }
+
     @Test fun remove_deletesOnlyThatEvent() {
         val q = queue()
         q.enqueue(event("a"))
