@@ -106,7 +106,7 @@ public object Attribr {
             this.deviceIdentifier = DeviceIdentifier(this.appContext)
             this.eventQueue      = EventQueue(this.appContext, config.maxQueueSize, logger)
             this.deviceState     = DeviceStateStore(this.appContext)
-            this.networkClient   = NetworkClient(apiKey, config, logger)
+            this.networkClient   = NetworkClient(apiKey, config, logger) { consentManager.isGranted }
             this.deepLinkHandler = DeepLinkHandler(networkClient, deviceIdentifier, logger, appContext.packageName, eventQueue)
             this.isInitialized   = true
 
@@ -129,6 +129,9 @@ public object Attribr {
     public fun setConsent(state: ConsentState) {
         requireInitialized()
         consentManager.state = state
+        // Do not replay pre-withdrawal or pre-consent legacy payloads after
+        // subsequent opt-in; deletion is an explicit separate path.
+        if (state != ConsentState.GRANTED) eventQueue.clear()
         logger.info("Consent set to: ${state.rawValue}")
         if (state == ConsentState.GRANTED) {
             executor.execute { flushQueue() }
@@ -855,6 +858,7 @@ public object Attribr {
         logger.info("Flushing ${pending.size} queued event(s)")
 
         for (event in pending) {
+            if (!consentManager.isGranted) return
             val result = if (event.method == "DELETE") {
                 networkClient.delete(event.endpoint, event.payload)
             } else {
@@ -868,7 +872,7 @@ public object Attribr {
                 }
                 is NetworkResult.Failure -> {
                     logger.debug("Flush failed for event ${event.id} — keeping in queue")
-                    eventQueue.markFailed(event.id)
+                    if (consentManager.isGranted) eventQueue.markFailed(event.id)
                 }
             }
         }
