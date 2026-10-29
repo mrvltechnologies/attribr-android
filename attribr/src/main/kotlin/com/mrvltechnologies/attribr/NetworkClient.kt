@@ -15,6 +15,7 @@ internal class NetworkClient(
     private val apiKey: String,
     private val config: AttribrConfiguration,
     private val logger: AttribrLogger,
+    private val isTrackingAllowed: () -> Boolean,
 ) {
 
     fun post(path: String, body: String): NetworkResult = execute("POST", path, body)
@@ -22,6 +23,10 @@ internal class NetworkClient(
     fun delete(path: String, body: String): NetworkResult = execute("DELETE", path, body)
 
     private fun execute(method: String, path: String, body: String): NetworkResult {
+        // Single transport gate: a task queued while consent was granted may
+        // run after withdrawal. Erasure is explicitly exempt.
+        val isErasure = method == "DELETE" && path == "attribr-delete-user-data"
+        if (!isErasure && !isTrackingAllowed()) return NetworkResult.Failure(statusCode = 0, error = null)
         val url = URL("${config.baseURL.trimEnd('/')}/$path")
         var conn: HttpURLConnection? = null
         return try {
@@ -34,6 +39,10 @@ internal class NetworkClient(
                 readTimeout = config.requestTimeout.toInt()
                 doInput = true
                 doOutput = true
+            }
+            // Recheck after opening the connection but before writing any data.
+            if (!isErasure && !isTrackingAllowed()) {
+                return NetworkResult.Failure(statusCode = 0, error = null)
             }
             conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
             val code = conn.responseCode
