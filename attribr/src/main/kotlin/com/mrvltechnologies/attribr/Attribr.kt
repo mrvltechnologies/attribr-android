@@ -562,7 +562,7 @@ public object Attribr {
             }
             is NetworkResult.Failure -> {
                 logger.error("trackLaunch failed: ${result.statusCode} ${result.error?.message}")
-                eventQueue.enqueue(
+                if (consentManager.isGranted) eventQueue.enqueue(
                     QueuedEvent(
                         id         = UUID.randomUUID().toString(),
                         kind       = EventKind.TRACK,
@@ -595,7 +595,7 @@ public object Attribr {
             is NetworkResult.Success -> logger.debug("attributeInstall: success")
             is NetworkResult.Failure -> {
                 logger.error("attributeInstall failed: ${result.statusCode}")
-                eventQueue.enqueue(
+                if (consentManager.isGranted) eventQueue.enqueue(
                     QueuedEvent(
                         id         = UUID.randomUUID().toString(),
                         kind       = EventKind.ATTRIBUTE,
@@ -632,7 +632,7 @@ public object Attribr {
             is NetworkResult.Success -> logger.debug("trackEvent '$name': success")
             is NetworkResult.Failure -> {
                 logger.error("trackEvent '$name' failed: ${result.statusCode}")
-                eventQueue.enqueue(
+                if (consentManager.isGranted) eventQueue.enqueue(
                     QueuedEvent(
                         id         = UUID.randomUUID().toString(),
                         kind       = EventKind.EVENT,
@@ -704,7 +704,7 @@ public object Attribr {
             is NetworkResult.Success -> logger.debug("trackAdRevenue ($adNetwork): success")
             is NetworkResult.Failure -> {
                 logger.error("trackAdRevenue failed: ${result.statusCode} ${result.error?.message}")
-                eventQueue.enqueue(
+                if (consentManager.isGranted) eventQueue.enqueue(
                     QueuedEvent(
                         id         = UUID.randomUUID().toString(),
                         kind       = EventKind.AD_REVENUE,
@@ -742,7 +742,7 @@ public object Attribr {
                 // failure breaks uninstall detection for that device. Queue
                 // it like every other durable path.
                 logger.error("registerPushToken failed: ${result.statusCode} ${result.error?.message} — queued for retry")
-                eventQueue.enqueue(
+                if (consentManager.isGranted) eventQueue.enqueue(
                     QueuedEvent(
                         id         = UUID.randomUUID().toString(),
                         kind       = EventKind.PUSH_TOKEN,
@@ -786,7 +786,7 @@ public object Attribr {
             is NetworkResult.Success -> logger.debug("trackSubscriptionEvent '$eventType' ($productId): success")
             is NetworkResult.Failure -> {
                 logger.error("trackSubscriptionEvent failed: ${result.statusCode}")
-                eventQueue.enqueue(
+                if (consentManager.isGranted) eventQueue.enqueue(
                     QueuedEvent(
                         id         = UUID.randomUUID().toString(),
                         kind       = EventKind.SUBSCRIPTION_EVENT,
@@ -833,7 +833,7 @@ public object Attribr {
                 logger.error("trackRevenue failed: ${result.statusCode}")
                 // NOTE: EventKind.REVENUE must be added to the EventKind enum in EventQueue.kt
                 // when the supporting files are restored from the pending rebase.
-                eventQueue.enqueue(
+                if (consentManager.isGranted) eventQueue.enqueue(
                     QueuedEvent(
                         id         = UUID.randomUUID().toString(),
                         kind       = EventKind.REVENUE,
