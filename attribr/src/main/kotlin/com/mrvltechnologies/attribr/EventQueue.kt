@@ -69,6 +69,8 @@ internal class EventQueue internal constructor(
 
     fun peek(): List<QueuedEvent> = synchronized(lock) { load() }
 
+    fun clear() { synchronized(lock) { save(emptyList()) } }
+
     fun remove(id: String) {
         synchronized(lock) {
             val remaining = load().filterNot { it.id == id }
