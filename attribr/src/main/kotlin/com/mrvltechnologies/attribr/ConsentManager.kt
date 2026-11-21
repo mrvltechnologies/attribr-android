@@ -14,9 +14,13 @@ internal class ConsentManager(context: Context) {
     private val prefs = context.applicationContext
         .getSharedPreferences("attribr", Context.MODE_PRIVATE)
 
+    private val consentGeneration = java.util.concurrent.atomic.AtomicLong(0)
+    val generation: Long get() = consentGeneration.get()
+
     var state: ConsentState
         get() = ConsentState.fromRaw(prefs.getString(KEY_CONSENT, null))
         set(value) {
+            if (value != ConsentState.GRANTED) consentGeneration.incrementAndGet()
             prefs.edit().putString(KEY_CONSENT, value.rawValue).apply()
         }
 

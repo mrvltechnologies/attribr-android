@@ -71,6 +71,7 @@ internal class DeepLinkHandler(
                 }
             }
             is NetworkResult.Failure -> {
+                if (result.error is ConsentUnavailableException) return DeepLinkResult.Error("Tracking consent no longer valid")
                 // Durable delivery: the click payload is queued and retried on
                 // the next flush, so returning Attributed here is honest —
                 // the attribution WILL reach the server.

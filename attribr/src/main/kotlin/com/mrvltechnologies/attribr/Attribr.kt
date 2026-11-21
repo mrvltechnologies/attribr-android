@@ -104,9 +104,10 @@ public object Attribr {
             this.logger          = AttribrLogger(config.debugLogging)
             this.consentManager  = ConsentManager(this.appContext)
             this.deviceIdentifier = DeviceIdentifier(this.appContext)
-            this.eventQueue      = EventQueue(this.appContext, config.maxQueueSize, logger)
+            this.eventQueue      = EventQueue(this.appContext, config.maxQueueSize, logger) { consentManager.isGranted }
+            if (!consentManager.isGranted) this.eventQueue.clear()
             this.deviceState     = DeviceStateStore(this.appContext)
-            this.networkClient   = NetworkClient(apiKey, config, logger)
+            this.networkClient   = NetworkClient(apiKey, config, logger, generation = { consentManager.generation }) { consentManager.isGranted }
             this.deepLinkHandler = DeepLinkHandler(networkClient, deviceIdentifier, logger, appContext.packageName, eventQueue)
             this.isInitialized   = true
 
@@ -129,9 +130,12 @@ public object Attribr {
     public fun setConsent(state: ConsentState) {
         requireInitialized()
         consentManager.state = state
+        // Do not replay pre-withdrawal or pre-consent legacy payloads after
+        // subsequent opt-in; deletion is an explicit separate path.
+        if (state != ConsentState.GRANTED) eventQueue.clear()
         logger.info("Consent set to: ${state.rawValue}")
         if (state == ConsentState.GRANTED) {
-            executor.execute { flushQueue() }
+            executeTracking { flushQueue() }
         }
     }
 
@@ -151,7 +155,7 @@ public object Attribr {
             logger.debug("trackLaunch skipped — consent not granted")
             return
         }
-        executor.execute {
+        executeTracking {
             // Flush any events that failed on a previous launch before sending the
             // current one. Without this, queued events are only retried when
             // setConsent(GRANTED) is called again — which never happens after init.
@@ -185,7 +189,7 @@ public object Attribr {
             logger.debug("attributeInstall skipped — consent not granted")
             return
         }
-        executor.execute { sendAttribution(code, source, utmSource, utmCampaign) }
+        executeTracking { sendAttribution(code, source, utmSource, utmCampaign) }
     }
 
     /**
@@ -206,7 +210,7 @@ public object Attribr {
     ) {
         requireInitialized()
         if (!consentManager.isGranted) return
-        executor.execute { sendEvent(name, value, currency, metadata) }
+        executeTracking { sendEvent(name, value, currency, metadata) }
     }
 
     /**
@@ -254,7 +258,7 @@ public object Attribr {
             logger.debug("trackAdRevenue skipped — consent not granted")
             return
         }
-        executor.execute { sendAdRevenue(adNetwork, adUnitId, adFormat, revenue, currency) }
+        executeTracking { sendAdRevenue(adNetwork, adUnitId, adFormat, revenue, currency) }
     }
 
     /**
@@ -272,7 +276,7 @@ public object Attribr {
             logger.debug("registerPushToken skipped — consent not granted")
             return
         }
-        executor.execute { sendPushToken(fcmToken) }
+        executeTracking { sendPushToken(fcmToken) }
     }
 
     /**
@@ -301,7 +305,7 @@ public object Attribr {
             logger.debug("trackSubscriptionEvent skipped — consent not granted")
             return
         }
-        executor.execute {
+        executeTracking {
             sendSubscriptionEvent(productId, eventType, revenue, currency, originalTransactionId)
         }
     }
@@ -349,7 +353,7 @@ public object Attribr {
             logger.debug("trackRevenue skipped — consent not granted")
             return
         }
-        executor.execute {
+        executeTracking {
             sendRevenue(amount, currency, productId, transactionId, store, eventType)
         }
     }
@@ -448,7 +452,7 @@ public object Attribr {
                 deviceState.putBoolean(referrerCheckedKey, true)
                 runCatching { client.endConnection() }
                 logger.debug("Install referrer status: ${payload.optString("status")}")
-                executor.execute { sendInstallReferrer(payload) }
+                executeTracking { sendInstallReferrer(payload) }
             }
 
             override fun onInstallReferrerServiceDisconnected() {
@@ -559,7 +563,7 @@ public object Attribr {
             }
             is NetworkResult.Failure -> {
                 logger.error("trackLaunch failed: ${result.statusCode} ${result.error?.message}")
-                eventQueue.enqueue(
+                if (consentManager.isGranted && result.error !is ConsentUnavailableException) eventQueue.enqueue(
                     QueuedEvent(
                         id         = UUID.randomUUID().toString(),
                         kind       = EventKind.TRACK,
@@ -592,7 +596,7 @@ public object Attribr {
             is NetworkResult.Success -> logger.debug("attributeInstall: success")
             is NetworkResult.Failure -> {
                 logger.error("attributeInstall failed: ${result.statusCode}")
-                eventQueue.enqueue(
+                if (consentManager.isGranted && result.error !is ConsentUnavailableException) eventQueue.enqueue(
                     QueuedEvent(
                         id         = UUID.randomUUID().toString(),
                         kind       = EventKind.ATTRIBUTE,
@@ -629,7 +633,7 @@ public object Attribr {
             is NetworkResult.Success -> logger.debug("trackEvent '$name': success")
             is NetworkResult.Failure -> {
                 logger.error("trackEvent '$name' failed: ${result.statusCode}")
-                eventQueue.enqueue(
+                if (consentManager.isGranted && result.error !is ConsentUnavailableException) eventQueue.enqueue(
                     QueuedEvent(
                         id         = UUID.randomUUID().toString(),
                         kind       = EventKind.EVENT,
@@ -701,7 +705,7 @@ public object Attribr {
             is NetworkResult.Success -> logger.debug("trackAdRevenue ($adNetwork): success")
             is NetworkResult.Failure -> {
                 logger.error("trackAdRevenue failed: ${result.statusCode} ${result.error?.message}")
-                eventQueue.enqueue(
+                if (consentManager.isGranted && result.error !is ConsentUnavailableException) eventQueue.enqueue(
                     QueuedEvent(
                         id         = UUID.randomUUID().toString(),
                         kind       = EventKind.AD_REVENUE,
@@ -739,7 +743,7 @@ public object Attribr {
                 // failure breaks uninstall detection for that device. Queue
                 // it like every other durable path.
                 logger.error("registerPushToken failed: ${result.statusCode} ${result.error?.message} — queued for retry")
-                eventQueue.enqueue(
+                if (consentManager.isGranted && result.error !is ConsentUnavailableException) eventQueue.enqueue(
                     QueuedEvent(
                         id         = UUID.randomUUID().toString(),
                         kind       = EventKind.PUSH_TOKEN,
@@ -783,7 +787,7 @@ public object Attribr {
             is NetworkResult.Success -> logger.debug("trackSubscriptionEvent '$eventType' ($productId): success")
             is NetworkResult.Failure -> {
                 logger.error("trackSubscriptionEvent failed: ${result.statusCode}")
-                eventQueue.enqueue(
+                if (consentManager.isGranted && result.error !is ConsentUnavailableException) eventQueue.enqueue(
                     QueuedEvent(
                         id         = UUID.randomUUID().toString(),
                         kind       = EventKind.SUBSCRIPTION_EVENT,
@@ -830,7 +834,7 @@ public object Attribr {
                 logger.error("trackRevenue failed: ${result.statusCode}")
                 // NOTE: EventKind.REVENUE must be added to the EventKind enum in EventQueue.kt
                 // when the supporting files are restored from the pending rebase.
-                eventQueue.enqueue(
+                if (consentManager.isGranted && result.error !is ConsentUnavailableException) eventQueue.enqueue(
                     QueuedEvent(
                         id         = UUID.randomUUID().toString(),
                         kind       = EventKind.REVENUE,
@@ -855,6 +859,7 @@ public object Attribr {
         logger.info("Flushing ${pending.size} queued event(s)")
 
         for (event in pending) {
+            if (!(event.method == "DELETE" && event.endpoint == "attribr-delete-user-data") && !consentManager.isGranted) continue
             val result = if (event.method == "DELETE") {
                 networkClient.delete(event.endpoint, event.payload)
             } else {
@@ -868,7 +873,7 @@ public object Attribr {
                 }
                 is NetworkResult.Failure -> {
                     logger.debug("Flush failed for event ${event.id} — keeping in queue")
-                    eventQueue.markFailed(event.id)
+                    if (consentManager.isGranted) eventQueue.markFailed(event.id)
                 }
             }
         }
@@ -909,6 +914,14 @@ public object Attribr {
             // the backend can deduplicate timeout-then-retry double sends.
             // Never regenerate this at flush time.
             put("sdk_event_id", UUID.randomUUID().toString())
+        }
+    }
+
+    /** Bind queued work to the consent grant under which it was requested. */
+    private fun executeTracking(action: () -> Unit) {
+        val epoch = consentManager.generation
+        executor.execute {
+            if (consentManager.isGranted && consentManager.generation == epoch) action()
         }
     }
 
