@@ -15,6 +15,8 @@ internal class NetworkClient(
     private val apiKey: String,
     private val config: AttribrConfiguration,
     private val logger: AttribrLogger,
+    private val generation: () -> Long = { 0 },
+    private val isTrackingAllowed: () -> Boolean,
 ) {
 
     fun post(path: String, body: String): NetworkResult = execute("POST", path, body)
@@ -22,6 +24,11 @@ internal class NetworkClient(
     fun delete(path: String, body: String): NetworkResult = execute("DELETE", path, body)
 
     private fun execute(method: String, path: String, body: String): NetworkResult {
+        // Single transport gate: a task queued while consent was granted may
+        // run after withdrawal. Erasure is explicitly exempt.
+        val epoch = generation()
+        val isErasure = method == "DELETE" && path == "attribr-delete-user-data"
+        if (!isErasure && (!isTrackingAllowed() || generation() != epoch)) return NetworkResult.Failure(statusCode = 0, error = ConsentUnavailableException())
         val url = URL("${config.baseURL.trimEnd('/')}/$path")
         var conn: HttpURLConnection? = null
         return try {
@@ -35,6 +42,10 @@ internal class NetworkClient(
                 doInput = true
                 doOutput = true
             }
+            // Recheck after opening the connection but before writing any data.
+            if (!isErasure && (!isTrackingAllowed() || generation() != epoch)) {
+                return NetworkResult.Failure(statusCode = 0, error = ConsentUnavailableException())
+            }
             conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
             val code = conn.responseCode
             val responseBody = try {
@@ -46,13 +57,16 @@ internal class NetworkClient(
                 NetworkResult.Success(statusCode = code, body = responseBody)
             } else {
                 logger.debug("$method $path -> HTTP $code: $responseBody")
-                NetworkResult.Failure(statusCode = code, error = null)
+                NetworkResult.Failure(statusCode = code, error = if (!isErasure && generation() != epoch) ConsentUnavailableException() else null)
             }
         } catch (t: Throwable) {
             logger.debug("$method $path -> exception: ${t.message}")
-            NetworkResult.Failure(statusCode = 0, error = t)
+            NetworkResult.Failure(statusCode = 0, error = if (!isErasure && generation() != epoch) ConsentUnavailableException() else t)
         } finally {
             try { conn?.disconnect() } catch (_: Throwable) {}
         }
     }
 }
+
+/** Signals a suppressed tracking request; callers must never retry its payload after re-consent. */
+internal class ConsentUnavailableException : IllegalStateException("Tracking consent no longer valid")

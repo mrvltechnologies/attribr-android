@@ -33,13 +33,15 @@ internal class EventQueue internal constructor(
     legacyPrefs: SharedPreferences?,
     private val maxSize: Int,
     private val logger: AttribrLogger,
+    private val canEnqueueTracking: () -> Boolean = { true },
 ) {
 
-    constructor(context: Context, maxSize: Int, logger: AttribrLogger) : this(
+    constructor(context: Context, maxSize: Int, logger: AttribrLogger, canEnqueueTracking: () -> Boolean = { true }) : this(
         DeviceStateStore(context),
         context.applicationContext.getSharedPreferences("attribr", Context.MODE_PRIVATE),
         maxSize,
         logger,
+        canEnqueueTracking,
     )
 
     private val lock = Any()
@@ -57,6 +59,9 @@ internal class EventQueue internal constructor(
 
     fun enqueue(event: QueuedEvent) {
         synchronized(lock) {
+            // Consent is checked under the same lock as purge: a request that
+            // fails after withdrawal cannot repopulate the discarded backlog.
+            if (!(event.method == "DELETE" && event.endpoint == "attribr-delete-user-data") && !canEnqueueTracking()) return
             val current = load().toMutableList()
             current.add(event)
             while (current.size > maxSize) {
@@ -68,6 +73,8 @@ internal class EventQueue internal constructor(
     }
 
     fun peek(): List<QueuedEvent> = synchronized(lock) { load() }
+
+    fun clear() { synchronized(lock) { save(load().filter { it.method == "DELETE" && it.endpoint == "attribr-delete-user-data" }) } }
 
     fun remove(id: String) {
         synchronized(lock) {

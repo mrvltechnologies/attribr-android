@@ -68,6 +68,38 @@ class EventQueueTest {
         assertEquals(EventKind.TRACK, reloaded[0].kind)
     }
 
+    @Test fun revoke_clearDropsAllStoredRetryPayloadsAcrossRestart() {
+        val file = tempStateFile("attribr_eq_revoke")
+        val q = queue(file)
+        q.enqueue(event("before-revocation"))
+        q.clear()
+        assertTrue(q.peek().isEmpty())
+        assertTrue(queue(file).peek().isEmpty())
+    }
+
+    @Test fun withdrawalPreservesErasureButDiscardsTracking() {
+        val q = queue()
+        q.enqueue(event("tracking"))
+        q.enqueue(event("erasure").copy(method = "DELETE", endpoint = "attribr-delete-user-data"))
+        q.clear()
+        assertEquals(listOf("erasure"), q.peek().map { it.id })
+    }
+
+    @Test fun failedRequestCannotRequeueAfterWithdrawal() {
+        var allowed = true
+        val file = tempStateFile("attribr_eq_late_failure")
+        val q = EventQueue(DeviceStateStore(file), null, 500, RecordingLogger()) { allowed }
+        q.enqueue(event("before"))
+        allowed = false
+        q.clear()
+        q.enqueue(event("late-failed-request"))
+        assertTrue(q.peek().isEmpty())
+        allowed = true
+        assertTrue(queue(file).peek().isEmpty())
+        q.enqueue(event("new-consented-event"))
+        assertEquals(listOf("new-consented-event"), q.peek().map { it.id })
+    }
+
     @Test fun remove_deletesOnlyThatEvent() {
         val q = queue()
         q.enqueue(event("a"))
